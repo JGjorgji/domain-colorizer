@@ -13,23 +13,43 @@ async function getSettings() {
     bannerText: DEFAULTS.bannerText,
     bannerHeight: DEFAULTS.bannerHeight,
     domainMode: "all",
-    domainPatterns: []
+    domainPatterns: [],
+    patternColors: {}
   });
   return {
     overrides: data.overrides || {},
     bannerText: data.bannerText || DEFAULTS.bannerText,
     bannerHeight: typeof data.bannerHeight === "number" ? data.bannerHeight : DEFAULTS.bannerHeight,
     domainMode: data.domainMode || "all",
-    domainPatterns: data.domainPatterns || []
+    domainPatterns: data.domainPatterns || [],
+    patternColors: data.patternColors || {}
   };
 }
 
 async function computeColor(hostname) {
   const settings = await getSettings();
+  
+  // First check for exact domain override
   const override = settings.overrides[hostname];
   if (override && override.hsl) {
     return { color: ColorUtils.hslString(override.hsl), textColor: override.textColor || ColorUtils.getTextColorForBg(override.hsl) };
   }
+  
+  // Then check for pattern match (patterns are checked in order, first match wins)
+  // Pattern colors work regardless of domainMode - they're just color assignments
+  for (const pattern of settings.domainPatterns) {
+    if (ColorUtils.matchesDomainPattern(hostname, pattern)) {
+      const patternColor = settings.patternColors[pattern];
+      if (patternColor && patternColor.hsl) {
+        return { 
+          color: ColorUtils.hslString(patternColor.hsl), 
+          textColor: patternColor.textColor || ColorUtils.getTextColorForBg(patternColor.hsl) 
+        };
+      }
+    }
+  }
+  
+  // Default: generate color from hostname
   const hsl = ColorUtils.hostnameToHsl(hostname);
   return { color: ColorUtils.hslString(hsl), textColor: ColorUtils.getTextColorForBg(hsl) };
 }
@@ -70,9 +90,17 @@ function extractHostname(url) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === "loading" && tab.url) {
+  // Send update on both loading and complete to ensure it always runs
+  if ((changeInfo.status === "loading" || changeInfo.status === "complete") && tab.url) {
     const hostname = extractHostname(tab.url);
-    sendUpdateToTab(tabId, hostname);
+    // Use setTimeout to ensure URL is fully updated
+    setTimeout(() => {
+      chrome.tabs.get(tabId).then(updatedTab => {
+        if (updatedTab.url) {
+          sendUpdateToTab(tabId, extractHostname(updatedTab.url));
+        }
+      }).catch(() => {});
+    }, changeInfo.status === "loading" ? 0 : 100);
   }
 });
 
@@ -84,8 +112,11 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "request-domain-color" && sender.tab?.id) {
-    const hostname = extractHostname(sender.tab.url || "");
-    sendUpdateToTab(sender.tab.id, hostname);
+    // Get fresh tab info to ensure we have the latest URL
+    chrome.tabs.get(sender.tab.id).then(tab => {
+      const hostname = extractHostname(tab.url || "");
+      sendUpdateToTab(sender.tab.id, hostname);
+    }).catch(() => {});
   }
   if (message?.type === "save-settings") {
     chrome.storage.sync.set(message.payload || {}, () => sendResponse({ ok: true }));

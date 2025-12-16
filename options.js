@@ -26,6 +26,7 @@ const patternList = document.getElementById("patternList");
 
 let overrides = {};
 let domainPatterns = [];
+let patternColors = {};
 
 function hslToHex(hsl) {
   const { h, s, l } = hsl;
@@ -65,12 +66,14 @@ async function load() {
     bannerHeight: DEFAULTS.bannerHeight,
     overrides: {},
     domainMode: DEFAULTS.domainMode,
-    domainPatterns: DEFAULTS.domainPatterns
+    domainPatterns: DEFAULTS.domainPatterns,
+    patternColors: {}
   });
   bannerTextInput.value = data.bannerText;
   bannerHeightInput.value = data.bannerHeight;
   overrides = data.overrides || {};
   domainPatterns = data.domainPatterns || [];
+  patternColors = data.patternColors || {};
   
   if (data.domainMode === "allowlist") {
     domainModeAllowlist.checked = true;
@@ -96,16 +99,57 @@ function renderPatterns() {
   domainPatterns.forEach((pattern, idx) => {
     const el = document.createElement("div");
     el.className = "badge";
+    const patternColor = patternColors[pattern] || ColorUtils.hostnameToHsl(pattern);
+    const colorHex = hslToHex(patternColor);
+    const colorDisplay = ColorUtils.hslString(patternColor);
+    const textColor = patternColors[pattern]?.textColor || ColorUtils.getTextColorForBg(patternColor);
+    
     el.innerHTML = `
-      <span style="flex: 1;">${pattern}</span>
+      <input type="color" data-pattern="${pattern}" value="${colorHex}" style="width: 40px; height: 32px; border: 1px solid #cbd5e1; border-radius: 4px; cursor: pointer;">
+      <span style="flex: 1; font-weight: 600;">${pattern}</span>
+      <span class="color-preview" data-pattern="${pattern}" style="color: ${textColor}; background: ${colorDisplay}; padding: 2px 6px; border-radius: 4px; font-size: 11px;">${colorDisplay}</span>
       <button data-index="${idx}">Remove</button>
     `;
+    
+    const colorInput = el.querySelector('input[type="color"]');
+    const colorPreview = el.querySelector('.color-preview');
+    
+    colorInput.addEventListener("input", (e) => {
+      // Update in real-time as user drags the color picker
+      const hsl = hexToHsl(e.target.value);
+      patternColors[pattern] = {
+        hsl,
+        textColor: ColorUtils.getTextColorForBg(hsl)
+      };
+      updatePatternColorDisplay(pattern, colorPreview, hsl);
+    });
+    
+    colorInput.addEventListener("change", (e) => {
+      // Final update when user confirms selection
+      const hsl = hexToHsl(e.target.value);
+      patternColors[pattern] = {
+        hsl,
+        textColor: ColorUtils.getTextColorForBg(hsl)
+      };
+      updatePatternColorDisplay(pattern, colorPreview, hsl);
+    });
+    
     el.querySelector("button").addEventListener("click", () => {
       domainPatterns.splice(idx, 1);
+      delete patternColors[pattern];
       renderPatterns();
     });
     patternList.appendChild(el);
   });
+}
+
+function updatePatternColorDisplay(pattern, previewEl, hsl) {
+  if (!previewEl) return;
+  const colorDisplay = ColorUtils.hslString(hsl);
+  const textColor = ColorUtils.getTextColorForBg(hsl);
+  previewEl.textContent = colorDisplay;
+  previewEl.style.background = colorDisplay;
+  previewEl.style.color = textColor;
 }
 
 function renderOverrides() {
@@ -162,14 +206,25 @@ addOverrideBtn.addEventListener("click", () => {
 saveBtn.addEventListener("click", async () => {
   const domainMode = domainModeAllowlist.checked ? "allowlist" : 
                      domainModeBlocklist.checked ? "blocklist" : "all";
+  
+  // Clean up patternColors to remove entries for patterns that no longer exist
+  const cleanedPatternColors = {};
+  domainPatterns.forEach(pattern => {
+    if (patternColors[pattern]) {
+      cleanedPatternColors[pattern] = patternColors[pattern];
+    }
+  });
+  
   const payload = {
     bannerText: bannerTextInput.value || DEFAULTS.bannerText,
     bannerHeight: Number(bannerHeightInput.value) || DEFAULTS.bannerHeight,
     overrides,
     domainMode,
-    domainPatterns
+    domainPatterns,
+    patternColors: cleanedPatternColors
   };
   await chrome.storage.sync.set(payload);
+  patternColors = cleanedPatternColors;
   statusEl.textContent = "Saved";
   setTimeout(() => (statusEl.textContent = ""), 1500);
 });
@@ -177,6 +232,7 @@ saveBtn.addEventListener("click", async () => {
 resetBtn.addEventListener("click", async () => {
   overrides = {};
   domainPatterns = [];
+  patternColors = {};
   bannerTextInput.value = DEFAULTS.bannerText;
   bannerHeightInput.value = DEFAULTS.bannerHeight;
   domainModeAll.checked = true;
@@ -185,7 +241,8 @@ resetBtn.addEventListener("click", async () => {
     bannerHeight: DEFAULTS.bannerHeight,
     overrides: {},
     domainMode: DEFAULTS.domainMode,
-    domainPatterns: DEFAULTS.domainPatterns
+    domainPatterns: DEFAULTS.domainPatterns,
+    patternColors: {}
   });
   updateDomainPatternsSection();
   renderPatterns();

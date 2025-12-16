@@ -25,7 +25,29 @@ function ensureBanner({ hostname, color, textColor, bannerText, bannerHeight }) 
     banner.style.lineHeight = "1";
     banner.style.boxShadow = "0 1px 3px rgba(0,0,0,0.2)";
     document.documentElement.style.paddingTop = `${bannerHeight}px`;
-    document.body.prepend(banner);
+    
+    // Ensure body exists before prepending
+    if (document.body) {
+      document.body.prepend(banner);
+    } else {
+      // If body doesn't exist yet, append to documentElement and move later
+      document.documentElement.appendChild(banner);
+      // Move to body when it becomes available
+      const observer = new MutationObserver(() => {
+        if (document.body && banner.parentNode !== document.body) {
+          document.body.prepend(banner);
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      // Fallback: try again after a short delay
+      setTimeout(() => {
+        if (document.body && banner.parentNode !== document.body) {
+          document.body.prepend(banner);
+        }
+        observer.disconnect();
+      }, 100);
+    }
   }
 
   banner.style.height = `${bannerHeight}px`;
@@ -59,20 +81,48 @@ function handleMessage(message) {
 }
 
 function requestColor() {
-  chrome.runtime.sendMessage({ type: "request-domain-color" });
+  chrome.runtime.sendMessage({ type: "request-domain-color" }).catch(() => {});
 }
 
 chrome.runtime.onMessage.addListener(handleMessage);
 
-// Initial request and observe SPA nav via history/state changes.
-requestColor();
-window.addEventListener("popstate", requestColor, true);
+// Request color on multiple events to ensure it always runs
+function ensureColorRequest() {
+  requestColor();
+}
+
+// Initial request
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", ensureColorRequest);
+} else {
+  ensureColorRequest();
+}
+
+// Also request when document becomes ready
+if (document.readyState === "complete") {
+  ensureColorRequest();
+} else {
+  window.addEventListener("load", ensureColorRequest);
+}
+
+// Observe SPA nav via history/state changes
+window.addEventListener("popstate", ensureColorRequest, true);
 ["pushState", "replaceState"].forEach((key) => {
   const original = history[key];
   history[key] = function (...args) {
     const result = original.apply(this, args);
-    requestColor();
+    setTimeout(ensureColorRequest, 0);
     return result;
   };
 });
+
+// Fallback: periodically check if banner exists and request if needed (for edge cases)
+let checkInterval = setInterval(() => {
+  if (window.top === window && !document.getElementById(BANNER_ID) && currentHostname) {
+    ensureColorRequest();
+  }
+}, 1000);
+
+// Clear interval after 10 seconds to avoid unnecessary checks
+setTimeout(() => clearInterval(checkInterval), 10000);
 
