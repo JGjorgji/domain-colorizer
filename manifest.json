@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Domain Colorizer",
+  "description": "Generate a deterministic color per domain/subdomain and show a top banner for quick visual identification.",
+  "version": "0.1.0",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["color.js", "content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
